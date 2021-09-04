@@ -7,4 +7,7 @@
 ### Data details
 - Training
   - 7034 images
-  - shape ()
+  - high quality image shape (304, 304, 3) # (high, weight, channel)
+- Testing
+  - 1155 images
+  - image shape (304, 304, 3) # (high, weight, channel)
