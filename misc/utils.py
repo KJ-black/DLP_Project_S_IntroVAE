@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import numpy as np
 import scipy.misc
+import cv2
 import os
 import errno
 
@@ -44,13 +45,12 @@ def transform(image, image_size, is_crop, bbox):
     if is_crop:
         image = custom_crop(image, bbox)
     #
-    transformed_image =\
-        scipy.misc.imresize(image, [image_size, image_size], 'bicubic')
+    transformed_image = cv2.resize(image, dsize=(image_size, image_size), interpolation=cv2.INTER_CUBIC)
     return np.array(transformed_image)
 
 
 def imread(path):
-    img = scipy.misc.imread(path)
+    img = cv2.imread(path)
     if len(img.shape) == 0:
         raise ValueError(path + " got loaded as a dimensionless array!")
     return img.astype(np.float)

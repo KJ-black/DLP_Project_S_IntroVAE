@@ -7,8 +7,9 @@ from __future__ import unicode_literals
 import numpy as np
 import os
 import pickle
-from misc.utils import get_image
-import scipy.misc
+import cv2
+from utils import get_image
+
 
 # from glob import glob
 
@@ -39,7 +40,7 @@ def save_data_list(inpath, outpath, filenames):
         img = get_image(f_name, LOAD_SIZE, is_crop=False)
         img = img.astype('uint8')
         hr_images.append(img)
-        lr_img = scipy.misc.imresize(img, [lr_size, lr_size], 'bicubic')
+        lr_img = cv2.resize(img, dsize=(lr_size, lr_size), interpolation=cv2.INTER_CUBIC)
         lr_images.append(lr_img)
         cnt += 1
         if cnt % 100 == 0:
