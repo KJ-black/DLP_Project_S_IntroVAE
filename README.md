@@ -11,3 +11,6 @@
 - Testing
   - 1155 images
   - image shape (304, 304, 3) # (high, weight, channel)
+
+## Model
+![Alt text](https://github.com/James24029775/DLP_Project_S-IntroVAE/blob/master/models/Network.png)
