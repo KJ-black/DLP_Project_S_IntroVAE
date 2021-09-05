@@ -198,6 +198,8 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
 
                 _, _, _, rec_det = model(real_batch, deterministic=True)
                 max_imgs = min(batch.size(0), 16)
+				if not os.path.exists("./train_record/"):
+					os.makedirs("./train_record/")
                 vutils.save_image(
                         torch.cat([real_batch[:max_imgs], rec_det[:max_imgs], fake[:max_imgs]], dim=0).data.cpu(),
                         '{}/image_{}.jpg'.format("train_record/", cur_iter), nrow=num_row)                 
@@ -217,6 +219,8 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
                 noise_batch = torch.randn(size=(b_size, z_dim)).to(device)
                 fake = model.sample(noise_batch)
                 max_imgs = min(batch.size(0), 16)
+				if not os.path.exists("./train_record/"):
+                    os.makedirs("./train_record/")
                 vutils.save_image(
                         torch.cat([real_batch[:max_imgs], rec_det[:max_imgs], fake[:max_imgs]], dim=0).data.cpu(),
                         '{}/image_{}.jpg'.format("train_record/", cur_iter), nrow=num_row)
