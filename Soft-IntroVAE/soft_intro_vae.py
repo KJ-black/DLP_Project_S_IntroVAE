@@ -107,14 +107,15 @@ Models
 import torch
 import torch.nn as nn
 
-class _Residual_Block(nn.Module):
+
+class ResidualBlock(nn.Module):
     """
     https://github.com/hhb072/IntroVAE
     Difference: self.bn2 on output and not on (output + identity)
     """
 
     def __init__(self, inc=64, outc=64, groups=1, scale=1.0):
-        super(_Residual_Block, self).__init__()
+        super(ResidualBlock, self).__init__()
 
         midc = int(outc * scale)
 
@@ -147,13 +148,14 @@ class _Residual_Block(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, cdim=3, zdim=512, channels=(64, 128, 256, 512, 512, 512), image_size=256, conditional=False):
+    def __init__(self, cdim=3, zdim=512, channels=(64, 128, 256, 512, 512, 512), image_size=256, conditional=False,
+                 cond_dim=10):
         super(Encoder, self).__init__()
-
-        assert (2 ** len(channels)) * 4 == image_size
         self.zdim = zdim
+        self.cdim = cdim
+        self.image_size = image_size
         self.conditional = conditional
-        self.cond_dim = 10
+        self.cond_dim = cond_dim
         cc = channels[0]
         self.main = nn.Sequential(
             nn.Conv2d(cdim, cc, 5, 1, 2, bias=False),
@@ -164,15 +166,24 @@ class Encoder(nn.Module):
 
         sz = image_size // 2
         for ch in channels[1:]:
-            self.main.add_module('res_in_{}'.format(sz), _Residual_Block(cc, ch, scale=1.0))
+            self.main.add_module('res_in_{}'.format(sz), ResidualBlock(cc, ch, scale=1.0))
             self.main.add_module('down_to_{}'.format(sz // 2), nn.AvgPool2d(2))
             cc, sz = ch, sz // 2
 
-        self.main.add_module('res_in_{}'.format(sz), _Residual_Block(cc, cc, scale=1.0))
+        self.main.add_module('res_in_{}'.format(sz), ResidualBlock(cc, cc, scale=1.0))
+        self.conv_output_size = self.calc_conv_output_size()
+        num_fc_features = torch.zeros(self.conv_output_size).view(-1).shape[0]
+        # print("conv shape: ", self.conv_output_size)
+        # print("num fc features: ", num_fc_features)
         if self.conditional:
-            self.fc = nn.Linear(cc * 4 * 4 + self.cond_dim, 2 * zdim)
+            self.fc = nn.Linear(num_fc_features + self.cond_dim, 2 * zdim)
         else:
-            self.fc = nn.Linear(cc * 4 * 4, 2 * zdim)
+            self.fc = nn.Linear(num_fc_features, 2 * zdim)
+
+    def calc_conv_output_size(self):
+        dummy_input = torch.zeros(1, self.cdim, self.image_size, self.image_size)
+        dummy_input = self.main(dummy_input)
+        return dummy_input[0].shape
 
     def forward(self, x, o_cond=None):
         y = self.main(x).view(x.size(0), -1)
@@ -184,21 +195,27 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, cdim=3, zdim=512, channels=(64, 128, 256, 512, 512, 512), image_size=256, conditional=False):
+    def __init__(self, cdim=3, zdim=512, channels=(64, 128, 256, 512, 512, 512), image_size=256, conditional=False,
+                 conv_input_size=None, cond_dim=10):
         super(Decoder, self).__init__()
-
-        assert (2 ** len(channels)) * 4 == image_size
+        self.cdim = cdim
+        self.image_size = image_size
         self.conditional = conditional
         cc = channels[-1]
-        self.cond_dim = 10
+        self.conv_input_size = conv_input_size
+        if conv_input_size is None:
+            num_fc_features = cc * 4 * 4
+        else:
+            num_fc_features = torch.zeros(self.conv_input_size).view(-1).shape[0]
+        self.cond_dim = cond_dim
         if self.conditional:
             self.fc = nn.Sequential(
-                nn.Linear(zdim + self.cond_dim, cc * 4 * 4),
+                nn.Linear(zdim + self.cond_dim, num_fc_features),
                 nn.ReLU(True),
             )
         else:
             self.fc = nn.Sequential(
-                nn.Linear(zdim, cc * 4 * 4),
+                nn.Linear(zdim, num_fc_features),
                 nn.ReLU(True),
             )
 
@@ -206,11 +223,11 @@ class Decoder(nn.Module):
 
         self.main = nn.Sequential()
         for ch in channels[::-1]:
-            self.main.add_module('res_in_{}'.format(sz), _Residual_Block(cc, ch, scale=1.0))
+            self.main.add_module('res_in_{}'.format(sz), ResidualBlock(cc, ch, scale=1.0))
             self.main.add_module('up_to_{}'.format(sz * 2), nn.Upsample(scale_factor=2, mode='nearest'))
             cc, sz = ch, sz * 2
 
-        self.main.add_module('res_in_{}'.format(sz), _Residual_Block(cc, cc, scale=1.0))
+        self.main.add_module('res_in_{}'.format(sz), ResidualBlock(cc, cc, scale=1.0))
         self.main.add_module('predict', nn.Conv2d(cc, cdim, 5, 1, 2))
 
     def forward(self, z, y_cond=None):
@@ -219,19 +236,24 @@ class Decoder(nn.Module):
             y_cond = y_cond.view(y_cond.size(0), -1)
             z = torch.cat([z, y_cond], dim=1)
         y = self.fc(z)
-        y = y.view(z.size(0), -1, 4, 4)
+        y = y.view(z.size(0), *self.conv_input_size)
         y = self.main(y)
         return y
 
+
 class SoftIntroVAE(nn.Module):
-    def __init__(self, cdim=3, zdim=512, channels=(64, 128, 256, 512, 512, 512), image_size=256, conditional=False):
+    def __init__(self, cdim=3, zdim=512, channels=(64, 128, 256, 512, 512, 512), image_size=256, conditional=False,
+                 cond_dim=10):
         super(SoftIntroVAE, self).__init__()
 
         self.zdim = zdim
         self.conditional = conditional
+        self.cond_dim = cond_dim
 
-        self.encoder = Encoder(cdim, zdim, channels, image_size, conditional=conditional)
-        self.decoder = Decoder(cdim, zdim, channels, image_size, conditional=conditional)
+        self.encoder = Encoder(cdim, zdim, channels, image_size, conditional=conditional, cond_dim=cond_dim)
+
+        self.decoder = Decoder(cdim, zdim, channels, image_size, conditional=conditional,
+                               conv_input_size=self.encoder.conv_output_size, cond_dim=cond_dim)
 
     def forward(self, x, o_cond=None, deterministic=False):
         if self.conditional and o_cond is not None:
@@ -241,7 +263,6 @@ class SoftIntroVAE(nn.Module):
             else:
                 z = reparameterize(mu, logvar)
             y = self.decode(z, y_cond=o_cond)
-            return mu, logvar, z, y
         else:
             mu, logvar = self.encode(x)
             if deterministic:
@@ -249,7 +270,7 @@ class SoftIntroVAE(nn.Module):
             else:
                 z = reparameterize(mu, logvar)
             y = self.decode(z)
-            return mu, logvar, z, y
+        return mu, logvar, z, y
 
     def sample(self, z, y_cond=None):
         y = self.decode(z, y_cond=y_cond)

@@ -19,11 +19,12 @@ import torchvision.utils as vutils
 # other Functions
 from soft_intro_vae import SoftIntroVAE, calc_kl, calc_reconstruction_loss, save_checkpoint, load_model, reparameterize
 from dataset import ImageDatasetFromFile
+from metrics.fid_score import calculate_fid_given_dataset
 
 def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, batch_size=128, num_workers=4, start_epoch=0,
                        num_epochs=250, num_vae=0, save_interval=5000, recon_loss_type="mse",
-                       beta_kl=1.0, beta_rec=1.0, beta_neg=1.0, test_iter=1000, seed=-1, pretrained=None,
-                       device=torch.device("cpu"), num_row=8, gamma_r=1e-8):
+                       beta_kl=1.0, beta_rec=1.0, beta_neg=1.0, img_size=32, with_fid = False, test_iter=1000, seed=-1, 
+                       pretrained=None, device=torch.device("cpu"), num_row=8, gamma_r=1e-8):
     if seed != -1:
         random.seed(seed)
         np.random.seed(seed)
@@ -34,10 +35,10 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
 
     # --------------build models -------------------------
     if dataset == '102flowers':
-        image_size = 32
+        image_size = img_size
         channels = [64, 128, 256]
         data_root = 'Data/flowers/'
-        output_height = 32
+        output_height = img_size
         with open(data_root+'train/filenames.pickle', 'rb') as f:
             train_list = pickle.load(f)
         train_set = ImageDatasetFromFile(train_list, data_root, input_height=None, crop_height=None,
@@ -69,8 +70,28 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
     kls_fake = []
     kls_rec = []
     rec_errs = []
+    best_fid = None
     
     for epoch in range(start_epoch, num_epochs):
+
+        if with_fid and ((epoch == 0) or (epoch >= 100 and epoch % 20 == 0) or epoch == num_epochs - 1):
+            with torch.no_grad():
+                print("calculating fid...")
+                fid = calculate_fid_given_dataset(train_data_loader, model, batch_size, cuda=True, dims=2048,
+                                                  device=device, num_images=50000)
+                print("fid:", fid)
+                if best_fid is None:
+                    best_fid = fid
+                elif best_fid > fid:
+                    print("best fid updated: {} -> {}".format(best_fid, fid))
+                    best_fid = fid
+                    # save
+                    save_epoch = epoch
+                    prefix = dataset + "_soft_intro" + "_betas_" + str(beta_kl) + "_" + str(beta_neg) + "_" + str(
+                        beta_rec) + "_" + "fid_" + str(fid) + "_"
+                    save_checkpoint(model, save_epoch, cur_iter, prefix)
+
+
         diff_kls = []
         # save models
         if epoch % save_interval == 0 and epoch > 0:
@@ -198,8 +219,6 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
 
                 _, _, _, rec_det = model(real_batch, deterministic=True)
                 max_imgs = min(batch.size(0), 16)
-				if not os.path.exists("./train_record/"):
-					os.makedirs("./train_record/")
                 vutils.save_image(
                         torch.cat([real_batch[:max_imgs], rec_det[:max_imgs], fake[:max_imgs]], dim=0).data.cpu(),
                         '{}/image_{}.jpg'.format("train_record/", cur_iter), nrow=num_row)                 
@@ -219,8 +238,6 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
                 noise_batch = torch.randn(size=(b_size, z_dim)).to(device)
                 fake = model.sample(noise_batch)
                 max_imgs = min(batch.size(0), 16)
-				if not os.path.exists("./train_record/"):
-                    os.makedirs("./train_record/")
                 vutils.save_image(
                         torch.cat([real_batch[:max_imgs], rec_det[:max_imgs], fake[:max_imgs]], dim=0).data.cpu(),
                         '{}/image_{}.jpg'.format("train_record/", cur_iter), nrow=num_row)
