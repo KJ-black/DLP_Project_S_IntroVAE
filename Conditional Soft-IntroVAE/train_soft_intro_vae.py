@@ -21,13 +21,13 @@ import tqdm
 
 # other Functions
 from utils import *
-from soft_intro_vae import SoftIntroVAE
+from conditional_soft_intro_vae import SoftIntroVAE
 from dataset import ImageDatasetFromFile
 
 def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, batch_size=128, num_workers=4, start_epoch=0,
                        num_epochs=250, num_vae=0, save_interval=5000, recon_loss_type="mse",
-                       beta_kl=1.0, beta_rec=1.0, beta_neg=1.0, test_iter=1000, seed=-1, pretrained=None,
-                       device=torch.device("cpu"), num_row=8, gamma_r=1e-8):
+                       beta_kl=1.0, beta_rec=1.0, beta_neg=1.0, img_size=32, with_fid = False, test_iter=1000, seed=-1, 
+                       pretrained=None, device=torch.device("cpu"), num_row=8, gamma_r=1e-8):
     if seed != -1:
         random.seed(seed)
         np.random.seed(seed)
@@ -38,10 +38,10 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
 
     # --------------build models -------------------------
     if dataset == '102flowers':
-        image_size = 32
+        image_size = img_size
         channels = [64, 128, 256]
         data_root = 'Data/flowers/'
-        output_height = 32
+        output_height = img_size
         with open(data_root+'train/filenames.pickle', 'rb') as f:
             train_list = pickle.load(f)
         with open(data_root+'train/char-CNN-RNN-embeddings.pickle', 'rb') as f:
@@ -79,7 +79,7 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
     kls_rec = []
     rec_errs = []
     
-    for epoch in tqdm.tqdm(range(start_epoch, num_epochs)):
+    for epoch in tqdm.notebook.tqdm(range(start_epoch, num_epochs)):
         diff_kls = []
         # save models
         if epoch % save_interval == 0 and epoch > 0:
