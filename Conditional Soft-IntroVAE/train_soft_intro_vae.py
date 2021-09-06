@@ -79,7 +79,7 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
     kls_rec = []
     rec_errs = []
     
-    for epoch in tqdm.notebook.tqdm(range(start_epoch, num_epochs)):
+    for epoch in tqdm.tqdm(range(start_epoch, num_epochs)):
         diff_kls = []
         # save models
         if epoch % save_interval == 0 and epoch > 0:
