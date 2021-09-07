@@ -17,7 +17,7 @@ from torchvision import transforms
 import torchvision.utils as vutils
 
 # other Functions
-from soft_intro_vae import SoftIntroVAE, calc_kl, calc_reconstruction_loss, save_checkpoint, load_model, reparameterize
+from soft_intro_vae import *
 from dataset import ImageDatasetFromFile
 from metrics.fid_score import calculate_fid_given_dataset
 
@@ -74,6 +74,7 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
     
     for epoch in range(start_epoch, num_epochs):
 
+        # cal fid score
         if with_fid and ((epoch == 0) or (epoch >= 100 and epoch % 20 == 0) or epoch == num_epochs - 1):
             with torch.no_grad():
                 print("calculating fid...")
