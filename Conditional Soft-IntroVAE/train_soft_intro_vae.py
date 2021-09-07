@@ -23,6 +23,7 @@ import tqdm
 from utils import *
 from conditional_soft_intro_vae import SoftIntroVAE
 from dataset import ImageDatasetFromFile
+from metrics.fid_score import calculate_fid_given_dataset
 
 def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, batch_size=128, num_workers=4, start_epoch=0,
                        num_epochs=250, num_vae=0, save_interval=5000, recon_loss_type="mse",
@@ -78,8 +79,27 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
     kls_fake = []
     kls_rec = []
     rec_errs = []
+    best_fid = None
     
     for epoch in tqdm.tqdm(range(start_epoch, num_epochs)):
+        
+        if with_fid and ((epoch == 0) or (epoch >= 100 and epoch % 20 == 0) or epoch == num_epochs - 1):
+            with torch.no_grad():
+                print("calculating fid...")
+                fid = calculate_fid_given_dataset(train_data_loader, model, batch_size, cuda=True, dims=2048,
+                                                  device=device, num_images=50000)
+                print("fid:", fid)
+                if best_fid is None:
+                    best_fid = fid
+                elif best_fid > fid:
+                    print("best fid updated: {} -> {}".format(best_fid, fid))
+                    best_fid = fid
+                    # save
+                    save_epoch = epoch
+                    prefix = dataset + "_soft_intro" + "_betas_" + str(beta_kl) + "_" + str(beta_neg) + "_" + str(
+                        beta_rec) + "_" + "fid_" + str(fid) + "_"
+                    save_checkpoint(model, save_epoch, cur_iter, prefix)
+        
         diff_kls = []
         # save models
         if epoch % save_interval == 0 and epoch > 0:
@@ -159,7 +179,7 @@ def train_soft_intro_vae(dataset='cifar10', z_dim=128, lr_e=2e-4, lr_d=2e-4, bat
             fake = model.sample(noise_batch, y_cond=emb)
             rec = model.decoder(z.detach(), y_cond=emb.detach())
             
-                # ELBO loss for real -- just the reconstruction, KLD for real doesn't affect the decoder
+            # ELBO loss for real -- just the reconstruction, KLD for real doesn't affect the decoder
             loss_rec = calc_reconstruction_loss(real_batch, rec, loss_type=recon_loss_type, reduction="mean")
 
             # prepare 'fake' data for the ELBO
