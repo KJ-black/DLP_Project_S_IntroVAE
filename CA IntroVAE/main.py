@@ -22,14 +22,18 @@ import torchvision
 import torch.nn.functional as F
 from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
+from utils import CA_NET
+import matplotlib.pyplot as plt
 # from tensorboardX import SummaryWriter
 
 img_size = 32
 channels = "64, 128, 256"
 data_root = 'Data/flowers/'
 batchSize = 256
-epoch = 10000
+epoch = 500
 conditional = True
+emb_dim = 128
+test_iter = 500
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--lr_e', type=float, default=0.0002, help='learning rate of the encoder, default=0.0002')
@@ -42,7 +46,7 @@ parser.add_argument("--m_plus", type=float, default=100.0, help="the margin in t
 parser.add_argument('--channels', default=channels, type=str, help='the list of channel numbers')
 parser.add_argument("--hdim", type=int, default=128, help="dim of the latent code, Default=512")
 parser.add_argument("--save_iter", type=int, default=1, help="Default=1")
-parser.add_argument("--test_iter", type=int, default=1000, help="Default=1000")
+parser.add_argument("--test_iter", type=int, default=test_iter, help="Default=1000")
 parser.add_argument('--nrow', type=int, help='the number of images in each row', default=8)
 parser.add_argument('--dataroot', default=data_root, type=str, help='path to dataset')
 parser.add_argument('--workers', type=int, help='number of data loading workers', default=0)
@@ -109,7 +113,9 @@ def main():
     is_scale_back = False
     
     #--------------build models -------------------------
-    model = IntroVAE(cdim=3, hdim=opt.hdim, emb_dim=1024, channels=str_to_list(opt.channels), image_size=opt.output_height, conditional=conditional).cuda()  
+    model = IntroVAE(cdim=3, hdim=opt.hdim, emb_dim=emb_dim, channels=str_to_list(opt.channels), image_size=opt.output_height, conditional=conditional).cuda()
+    ca_net = CA_NET().cuda()
+
     if opt.pretrained:
         load_model(model, opt.pretrained)
     # print(model)
@@ -141,6 +147,7 @@ def main():
     
     def train(epoch, iteration, batch, cur_iter):  
         emb = batch[1].cuda()
+        emb, mu, logvar = ca_net(emb)
         batch = batch[0]
         if len(batch.size()) == 3:
             batch = batch.unsqueeze(0)
@@ -158,6 +165,7 @@ def main():
         #=========== Update E ================ 
         fake = model.sample(noise, y_cond=emb)           
         real_mu, real_logvar, z, rec = model(real, o_cond=emb)
+
         rec_mu, rec_logvar = model.encode(rec.detach(), o_cond=emb.detach())
         fake_mu, fake_logvar = model.encode(fake.detach(), o_cond=emb.detach())
         
@@ -176,10 +184,9 @@ def main():
         optimizerE.zero_grad()       
         lossE.backward(retain_graph=True)
         # nn.utils.clip_grad_norm(model.encoder.parameters(), 1.0)            
-        optimizerE.step()
+        
         
         #========= Update G ==================   
-        real_mu, real_logvar, z, rec = model(real, o_cond=emb)
         rec_mu, rec_logvar = model.encode(rec, o_cond=emb)
         fake_mu, fake_logvar = model.encode(fake, o_cond=emb)
         
@@ -187,10 +194,12 @@ def main():
         lossG_fake_kl = model.kl_loss(fake_mu, fake_logvar).mean()
         
         lossG = (lossG_rec_kl + lossG_fake_kl)* 0.5 * opt.weight_kl      
+        # lossG = (lossG_fake_kl)* 0.5 * opt.weight_kl      
                     
         # optimizerG.zero_grad()
         lossG.backward()
         # nn.utils.clip_grad_norm(model.decoder.parameters(), 1.0)
+        optimizerE.step()
         optimizerG.step()
         
         info += 'Rec: {:.4f}, '.format(loss_rec.item())
@@ -209,20 +218,72 @@ def main():
                 vutils.save_image(torch.cat([real[:max_imgs], rec[:max_imgs], fake[:max_imgs]], dim=0).data.cpu(), '{}/image_{}.jpg'.format(opt.outf, cur_iter),nrow=opt.nrow)
 
         if iteration == 0: 
-            print(info)             
+            print(info)
+
+        fake_kl = (lossE_fake_kl.item()+lossG_fake_kl.item())/2
+        rec_kl = (lossE_rec_kl.item()+lossG_rec_kl.item())/2
+        return lossE_real_kl.item(), fake_kl, rec_kl, loss_rec.item()
             
     
     #----------------Train by epochs--------------------------
+    kls_real = []
+    kls_fake = []
+    kls_rec = []
+    rec_errs = []
     for epoch in range(opt.start_epoch, opt.nEpochs + 1):  
         #save models
         save_epoch = (epoch//opt.save_iter)*opt.save_iter   
         save_checkpoint(model, save_epoch, 0, '')
         model.train()
         
+        batch_kls_real = []
+        batch_kls_fake = []
+        batch_kls_rec = []
+        batch_rec_errs = []
+
         for iteration, batch in enumerate(train_data_loader, 0):
             #--------------train------------
-            train(epoch, iteration, batch, cur_iter)
+            kl_real, kl_fake, kl_rec, rec_err = train(epoch, iteration, batch, cur_iter)
             cur_iter += 1
+
+            batch_kls_real.append(kl_real)
+            batch_kls_fake.append(kl_fake)
+            batch_kls_rec.append(kl_rec)
+            batch_rec_errs.append(rec_err)
+
+        kls_real.append(np.mean(batch_kls_real))
+        kls_fake.append(np.mean(batch_kls_fake))
+        kls_rec.append(np.mean(batch_kls_rec))
+        rec_errs.append(np.mean(batch_rec_errs))
+
+        if epoch == opt.nEpochs:
+            with torch.no_grad():
+
+                emb = batch[1].cuda()
+                emb, mu, logvar = ca_net(emb)
+                batch = batch[0]
+
+                real= Variable(batch).cuda() 
+                real_mu, real_logvar, z, rec = model(real, o_cond=emb)
+
+                batch_size = batch.size(0)
+
+                noise = Variable(torch.zeros(batch_size, opt.hdim).normal_(0, 1)).cuda() 
+                fake = model.sample(noise, y_cond=emb)
+                max_imgs = min(batch.size(0), 16)
+                vutils.save_image(torch.cat([real[:max_imgs], rec[:max_imgs], fake[:max_imgs]], dim=0).data.cpu(), '{}/image_{}.jpg'.format(opt.outf, cur_iter),nrow=opt.nrow)
+                    
+            # plot graphs
+            fig = plt.figure()
+            ax = fig.add_subplot(1, 1, 1)
+            ax.plot(np.arange(len(kls_real)), kls_real, label="kl_real")
+            ax.plot(np.arange(len(kls_fake)), kls_fake, label="kl_fake")
+            ax.plot(np.arange(len(kls_rec)), kls_rec, label="kl_rec")
+            ax.plot(np.arange(len(rec_errs)), rec_errs, label="rec_err")
+            ax.set_ylim([0, 200])
+            ax.legend()
+            plt.savefig(opt.outf+'/intro_vae_train_graphs.jpg')
+            plt.show()
             
 def load_model(model, pretrained):
     weights = torch.load(pretrained)
