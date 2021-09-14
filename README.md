@@ -19,6 +19,3 @@
   - char-CNN-RNN-embeddings.pickle: vector which is the output of char-CNN-RNN-embeddings with shape (10, 1024) with 7034 images
   - class_info.pickle: show that the images are belonged to which classes
   - filenames.pickle: show that the images filename with total 7034 images
-
-## Model
-![Alt text](https://github.com/James24029775/DLP_Project_S-IntroVAE/blob/master/models/Network.png)
